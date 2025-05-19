@@ -1,4 +1,5 @@
 leafmap
 solara
 geopandas
+xarray
 pydantic< 2.0 

@@ -1,0 +1,9 @@
+services:
+  solara:
+    container_name: solara_labeler
+    build: .
+    volumes:
+      - /workspace/Denys/solar/ortho-labeling/data/2023/:/home/jovyan/data
+    ports:
+      - "8600:8765"
+      - "8851:8888"

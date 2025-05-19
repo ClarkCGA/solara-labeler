@@ -1,16 +1,27 @@
 import leafmap
 import solara
+from urllib.parse import quote
+from localtileserver import TileClient
 
 zoom = solara.reactive(2)
 center = solara.reactive((20, 0))
 
 
+server = TileClient(
+    "/home/jovyan/data/vrt_output_mosaic.tif",
+    port=8888,
+    host="0.0.0.0",
+)
+
 class Map(leafmap.Map):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # Add what you want below
-        self.add_stac_gui()
+        file_url = quote("/home/jovyan/data/vrt_output_mosaic.tif", safe='')
+        tile_url = f'http://140.232.230.80:8851/api/tiles/{{z}}/{{x}}/{{y}}.png?&filename={file_url}'
 
+        self.add_tile_layer(url=tile_url, name="Local Tiles", attribution="Local Tile Server")
+
+        self.add_stac_gui()
 
 @solara.component
 def Page():

@@ -34,7 +34,7 @@ server = TileClient(
     host="0.0.0.0",
 )
 
-zoom = solara.reactive(19)
+zoom = solara.reactive(20)
 center = solara.reactive((42.251504, -71.823585))
 current_chip = solara.reactive(None)
 
@@ -69,7 +69,7 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
             info_mode=None
         )
         center.set((c[1], c[0]))
-        zoom.set(19)
+        zoom.set(20)
 
         setattr(m, "gdf", chip_gdf)
 
@@ -78,7 +78,10 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
 
 class LabelMap(leafmap.Map):
     def __init__(self, **kwargs):
+        kwargs["toolbar_control"] = False
         super().__init__(**kwargs)
+        for layer in self.layers:
+            layer.visible = False
         file_url = quote("/home/jovyan/data/2023/vrt_output_mosaic.tif", safe='')
         tile_url = f'http://140.232.230.80:8851/api/tiles/{{z}}/{{x}}/{{y}}.png?&filename={file_url}'
 

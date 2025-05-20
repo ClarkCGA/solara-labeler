@@ -16,4 +16,4 @@ USER ${NB_USER}
 EXPOSE 8765
 EXPOSE 8888
 
-CMD ["solara", "run", "./pages", "--host=0.0.0.0"]
+CMD ["solara", "run", "./pages/01_leafmap.py", "--host=0.0.0.0"]

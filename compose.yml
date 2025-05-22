@@ -7,4 +7,4 @@ services:
       - /workspace/Denys/solar/solara-labeler/:/home/jovyan/solara-labeler
     ports:
       - "8600:8765"
-      - "8851:8888"
+      - "8000:8888"

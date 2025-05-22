@@ -13,4 +13,4 @@ USER ${NB_USER}
 EXPOSE 8765
 EXPOSE 8888
 
-CMD ["solara", "run", "./solara-labeler/pages/interface.py", "--host=0.0.0.0"]
+CMD ["solara", "run", "./solara-labeler/src/pages/interface.py", "--host=0.0.0.0"]

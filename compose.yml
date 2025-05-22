@@ -4,6 +4,7 @@ services:
     build: .
     volumes:
       - /workspace/Denys/solar/ortho-labeling/data/:/home/jovyan/data
+      - /workspace/Denys/solar/solara-labeler/:/home/jovyan/solara-labeler
     ports:
       - "8600:8765"
       - "8851:8888"

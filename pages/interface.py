@@ -38,23 +38,29 @@ zoom = solara.reactive(20)
 center = solara.reactive((42.251504, -71.823585))
 current_chip = solara.reactive(None)
 
+def chip_to_xy_list(chip):
+    # get relevant x and y coordinates for an xyz server for a given chip
+    # return [[x1,y1],[x2, y2]]
+    return [[157542, 194135]] # as an example
+
 def add_widgets(m, data_dir, styledict, hover_style_dict):
     chip_button = widgets.Button(description="Next Chip")
 
     def next_chip(b):
-        chips = pd.read_csv(data_dir / 'chips_with_ortho_id.csv')
+        chips = pd.read_csv(data_dir / 'chip_tracker.csv')
 
         # Get a random chip with status 'label'
-        labeled_chips = chips[chips['status'] == 'label']
+        labeled_chips = chips[chips['status'] == 'pending']
 
-        chip = labeled_chips.sample(1)
+        chip = labeled_chips.head(1).copy()
         chips.loc[chip.index, 'status'] = 'active'
-        chips.to_csv(data_dir / 'chips_with_ortho_id.csv', index=False)
+        chips.to_csv(data_dir / 'chip_tracker.csv', index=False)
 
-        chip['geometry'] = chip['geometry'].apply(lambda coord_str: Polygon(eval(coord_str)))
-        chip['TILENAME'] = chip['TILENAME'].apply(eval)
+        chip['geometry'] = chip['bbox'].apply(lambda coord_str: Polygon(eval(coord_str)))
 
         chip_gdf = gpd.GeoDataFrame(chip, geometry='geometry', crs='EPSG:6348').to_crs('EPSG:3857')
+
+        current_chip.set(chip_gdf)
         c = [c[0] for c in chip_gdf.to_crs('EPSG:4326').iloc[0].geometry.centroid.coords.xy]
         for layer in list(m.layers):
             if layer.name == 'chip':  # Only remove layers with the specific name
@@ -83,10 +89,29 @@ class LabelMap(leafmap.Map):
         for layer in self.layers:
             layer.visible = False
         file_url = quote("/home/jovyan/data/2023/vrt_output_mosaic.tif", safe='')
-        tile_url = f'http://140.232.230.80:8851/api/tiles/{{z}}/{{x}}/{{y}}.png?&filename={file_url}'
-
-        self.add_tile_layer(url=tile_url, name="Local Tiles", attribution="Local Tile Server")
+        #tile_url = f'http://140.232.230.80:8851/api/tiles/{{z}}/{{x}}/{{y}}.png?&filename={file_url}'
+        tile_url = 'http://140.232.230.80:8851/api/tiles/19/157542/194135.png?&filename=%2Fhome%2Fjovyan%2Fdata%2F2023%2Fvrt_output_mosaic.tif'
+        #self.add_tile_layer(url=tile_url, name="Local Tiles", attribution="Local Tile Server")
         add_widgets(self, data_dir, styledict, hover_style_dict)
+
+@solara.component
+def TilePreloaderFromChip(chip_gdf, zoom_level):
+    if chip_gdf is None or chip_gdf.empty:
+        return
+
+    chip_xy_list = chip_to_xy_list(chip_gdf)
+
+    tile_urls = []
+    for x, y in chip_xy_list:
+        tile_url = f"http://140.232.230.80:8851/api/tiles/19/{x}/{y}.png?&filename=%2Fhome%2Fjovyan%2Fdata%2F2023%2Fvrt_output_mosaic.tif"
+        tile_urls.append(tile_url)
+
+    html_content = (
+        "<div style='display:none;'>"
+        + "\n".join([f"<img src='{url}' />" for url in tile_urls])
+        + "</div>"
+    )
+    return solara.HTML(tag="div", unsafe_innerHTML=html_content)
 
 @solara.component
 def Page():
@@ -99,7 +124,9 @@ def Page():
             scroll_wheel_zoom=True,
             toolbar_ctrl=False,
             data_ctrl=False,
-            height="780px",
+            height="780px"   
         )
+        if current_chip.value is not None:
+            TilePreloaderFromChip(current_chip.value, zoom.value)
     
     

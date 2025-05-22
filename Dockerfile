@@ -6,9 +6,6 @@ RUN mamba install -c conda-forge leafmap geopandas "localtileserver>=0.10.0" osm
 
 ENV PROJ_LIB='/opt/conda/share/proj'
 
-RUN mkdir ./pages
-COPY /pages ./pages
-
 USER root
 RUN chown -R ${NB_UID} ${HOME}
 USER ${NB_USER}
@@ -16,4 +13,4 @@ USER ${NB_USER}
 EXPOSE 8765
 EXPOSE 8888
 
-CMD ["solara", "run", "./pages/01_leafmap.py", "--host=0.0.0.0"]
+CMD ["solara", "run", "./solara-labeler/pages/interface.py", "--host=0.0.0.0"]

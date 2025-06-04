@@ -4,6 +4,9 @@ RUN mamba install -c conda-forge leafmap geopandas "localtileserver>=0.10.0" osm
     fix-permissions "${CONDA_DIR}" && \
     fix-permissions "/home/${NB_USER}"
 
+
+RUN pip3 install --no-cache-dir "leafmap>=0.1.0" "geopandas<=0.0.1" "localtileserver>=0.10.0"
+    
 ENV PROJ_LIB='/opt/conda/share/proj'
 
 USER root
@@ -13,4 +16,4 @@ USER ${NB_USER}
 EXPOSE 8765
 EXPOSE 8888
 
-CMD ["solara", "run", "./solara-labeler/src/pages/interface.py", "--host=0.0.0.0"]
+CMD ["solara", "run", "./solara-labeler/src/pages/01-interface.py", "--host=0.0.0.0"]

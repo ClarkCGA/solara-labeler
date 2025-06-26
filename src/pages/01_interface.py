@@ -13,11 +13,20 @@ import requests
 from urllib.parse import quote
 import math
 
-
 data_dir = Path('/home/jovyan/solara-labeler/src/public/')
 years = [2019, 2021, 2023]
+pre_render = True
 
-# Display Styles
+if not pre_render:
+    servers = {}
+    for year in years:
+        servers[year] = TileClient(
+            f"/home/jovyan/solara-labeler/src/public/{year}/{year}_orthophoto_cog.tif",
+            port=8888 + years.index(year),  # use different ports
+            host="0.0.0.0",
+        )
+
+#Display Styles
 styledict = {
             "stroke": True,
             "color": "#FF0000",
@@ -35,6 +44,9 @@ zoom = solara.reactive(20)
 center = solara.reactive((42.251504, -71.823585))
 current_chip = solara.reactive(None)
 previous_chip = solara.reactive(None)
+current_year_index = solara.reactive(0)
+current_user = solara.reactive("")
+success_visible = solara.reactive(False)
 
 def deg2num(lat_deg, lon_deg, zoom):
     lat_rad = math.radians(lat_deg)
@@ -143,6 +155,8 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
                     'chip_id': chip_id,
                     'geometry': Polygon(coords),
                     'timestamp': pd.Timestamp.now().isoformat(),
+                    'user' : current_user.value,
+                    'year': years[current_year_index.value],
                 })
         
         if features:
@@ -153,7 +167,7 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
             rois_gdf = rois_gdf.to_crs('EPSG:6348')
             
             # Save to file
-            output_path = data_dir / 'outputs' / f'{chip_id}_labels.geojson'
+            output_path = data_dir / 'outputs' / f'{chip_id}_labels_{years[current_year_index.value]}.geojson'
             
             rois_gdf.to_file(output_path, driver='GeoJSON')
             
@@ -186,7 +200,7 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
             chips.loc[chip_idx, 'status'] = 'pending'
             chips.to_csv(data_dir / 'chip_tracker.csv', index=False) 
 
-    def remove_rois(b):
+    def remove_chip_labels(b):
         # Remove rois for the current chip
         # Get the current chip information
         if current_chip.value is None:
@@ -194,8 +208,8 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
             return
         chip_id = current_chip.value.iloc[0]['id']
 
-        output_path = data_dir / 'outputs' / f'{chip_id}_labels.geojson'
-        output_path.unlink()
+        for year in years:
+            remove_year_labels(b, chip_id, year)
         
         # Update chip status to labeled in tracker
         chips = pd.read_csv(data_dir / 'chip_tracker.csv')
@@ -204,38 +218,82 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
             chips.loc[chip_idx, 'status'] = 'active'
             chips.to_csv(data_dir / 'chip_tracker.csv', index=False)
 
+    def remove_year_labels(b, chip_id, year):
+        output_path = data_dir / 'outputs' / f'{chip_id}_labels_{year}.geojson'
+        output_path.unlink(missing_ok=True)
+
+
+    def add_year_raster(year):
+        url = f'http://140.232.230.80:8600/static/public/{year}/tiles/{{z}}/{{x}}/{{y}}.png'
+        m.add_tile_layer(url=url, 
+                    name=f"{year} Orthos", 
+                    attribution="MassGIS",
+                    max_native_zoom=21,
+                    min_native_zoom=21,
+                    #min_zoom=19,
+                    )
+            
+
     def back_to_last_chip(b):
         mark_chip_pending(b)
         clear_rois(b)
         get_previous_chip(b)
-        remove_rois(b)
+        remove_chip_labels(b)
         mark_chip_active(b)
+        current_year_index.set(0)
 
-    def submit_chip(b):
-        save_rois(b)
-        mark_chip_labeled(b)
+    def back_to_last_year(b):
         clear_rois(b)
-        next_chip(b)
 
+        if current_year_index.value != 0:
+            current_year_index.set(current_year_index.value - 1)
+        if pre_render:
+            m.clear_layers()
+            add_year_raster(years[current_year_index.value])
+        remove_year_labels(b, current_chip.value.iloc[0]['id'], years[current_year_index.value])
         
-    back_to_last_chip_button = widgets.Button(description="Go back and redo last chip")
+
+    def sumbit_year(b):
+        save_rois(b)
+        success_visible.set(True)
+        clear_rois(b)
+        if current_year_index.value == (len(years) - 1):
+            if pre_render:
+                m.clear_layers()
+            current_year_index.set(0)
+            mark_chip_labeled(b)
+            next_chip(b)
+            if pre_render:
+                add_year_raster(years[current_year_index.value])
+        else:
+            current_year_index.set(current_year_index.value + 1)
+            if pre_render:
+                add_year_raster(years[current_year_index.value])
+
+
+    back_to_last_year_button = widgets.Button(description="Redo Previous Year",
+                                              button_style='danger')
+        
+    back_to_last_chip_button = widgets.Button(description="Redo Previous Chip",
+                                              button_style='warning')
     
-    submit_chip_button = widgets.Button(description="Save Labels to Disk", 
+    submit_year_button = widgets.Button(description="Save Labels to Disk", 
                             button_style='success',
                             tooltip='Save drawn regions to file')
     
-    delete_labels_button = widgets.Button(description="Delete Labels for current chip from Disk")
     
-
+    back_to_last_year_button.on_click(back_to_last_year)    
     back_to_last_chip_button.on_click(back_to_last_chip)
-    submit_chip_button.on_click(submit_chip)
-    delete_labels_button.on_click(remove_rois)
+    submit_year_button.on_click(sumbit_year)
+
 
     m.add_widget(back_to_last_chip_button)
-    m.add_widget(submit_chip_button)
-    m.add_widget(delete_labels_button)
+    m.add_widget(back_to_last_year_button)
+    m.add_widget(submit_year_button)
 
     next_chip(None)
+    if pre_render:
+        add_year_raster(years[current_year_index.value])
 
 class LabelMap(leafmap.Map):
     def __init__(self, **kwargs):
@@ -243,7 +301,6 @@ class LabelMap(leafmap.Map):
         super().__init__(**kwargs)
         for layer in self.layers:
             self.remove_layer(layer)
-            #layer.visible = False
         # mass_url = 'https://tiles.arcgis.com/tiles/hGdibHYSPO59RG1h/arcgis/rest/services/USGS_Orthos_2019/MapServer/WMTS/tile/1.0.0/USGS_Orthos_2019/default/default028mm/{z}/{y}/{x}'
         # self.add_tile_layer(url=mass_url, 
         #                     name="2019 Orthos WMTS", 
@@ -251,14 +308,17 @@ class LabelMap(leafmap.Map):
         #                     max_native_zoom=20,
         #                     min_native_zoom=20,
         #                     min_zoom=19)
-        for year in years:
-            url = f'http://140.232.230.80:8600/static/public/{year}/tiles/{{z}}/{{x}}/{{y}}.png'
-            self.add_tile_layer(url=url, 
-                            name=f"{year} Orthos", 
-                            attribution="MassGIS",
-                            max_native_zoom=21,
-                            min_native_zoom=21,
-                            min_zoom=19)
+        if not pre_render:
+            for year in years:
+                file_url = quote(f"/home/jovyan/solara-labeler/src/public/{year}/{year}_orthophoto_cog.tif", safe='')
+                port=8000 + years.index(year)
+                tile_url = f'http://140.232.230.80:{port}/api/tiles/{{z}}/{{x}}/{{y}}.png?&filename={file_url}'
+                self.add_tile_layer(url=tile_url, 
+                                    name=f"{year} Orthos", 
+                                    attribution="MassGIS",
+                                    max_native_zoom=10,
+                                    min_native_zoom=10,
+                                    min_zoom=10)        
         add_widgets(self, data_dir, styledict, hover_style_dict)
 
 
@@ -285,10 +345,8 @@ def TilePreloaderFromChip(chip_gdf):
 def Page():
     router = solara.use_router()
 
-    # This function doesn't use its argument 'b', so we can remove it.
     def mark_chip_pending():
         chip_id = current_chip.value.iloc[0]['id']
-        # Update chip status to labeled in tracker
         chips = pd.read_csv(data_dir / 'chip_tracker.csv')
         chip_idx = chips[chips['id'] == chip_id].index
         if len(chip_idx) > 0:
@@ -300,23 +358,32 @@ def Page():
         mark_chip_pending()
         router.push("/")
 
-    with solara.Column(style={"min-width": "500px"}):
-        LabelMap.element(
-            zoom=zoom.value,
-            on_zoom=zoom.set,
-            center=center.value,
-            on_center=center.set,
-            scroll_wheel_zoom=True,
-            toolbar_ctrl=False,
-            data_ctrl=False,
-            height="780px"   
-        )
+    with solara.Columns([1, 3]):
+        with solara.Column():
+            
+            solara.Markdown(f"**Current Year:** {years[current_year_index.value]}")
+            solara.InputText("Current User:", value=current_user.value, continuous_update=True)
+            solara.Button("Exit", on_click=exit_interface, color='red')
+            if success_visible.value:    
+                solara.Success(
+                    f"Saved Successfully",
+                    text=True,
+                    dense=True,
+                    outlined=True,
+                    icon=True,
+                )
+            
+        with solara.Column(style={"min-width": "500px"}):
+            LabelMap.element(
+                zoom=zoom.value,
+                on_zoom=zoom.set,
+                center=center.value,
+                on_center=center.set,
+                scroll_wheel_zoom=True,
+                toolbar_ctrl=False,
+                data_ctrl=False,
+                height="780px"   
+            )
 
-        solara.Button("Exit", on_click=exit_interface),
 
-    
-        # # Preload tiles for all chips in the buffer
-        # if chip_buffer.value:
-        #     for chip_gdf in chip_buffer.value:
-        #         TilePreloaderFromChip(chip_gdf)
     

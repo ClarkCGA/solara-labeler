@@ -1,0 +1,24 @@
+data_dir: '/home/jovyan/solara-labeler/src/public/'
+data_attribution: "MassGIS"
+years:
+  - 2019
+  - 2021
+  - 2023
+pre_render: True
+preload_chips: True
+chip_buffer_size: 5
+crs: 'EPSG:6348'
+
+map:
+  center:
+    - 42.251504
+    - -71.823585
+  zoom:
+    20
+
+tileserver:
+  host_base_port: 8000
+  container_base_port: 8888
+
+
+

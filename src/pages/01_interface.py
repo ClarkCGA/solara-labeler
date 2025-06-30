@@ -12,17 +12,25 @@ import ipywidgets as widgets
 import requests
 from urllib.parse import quote
 import math
+import yaml
 
-data_dir = Path('/home/jovyan/solara-labeler/src/public/')
-years = [2019, 2021, 2023]
-pre_render = True
+with open('/home/jovyan/solara-labeler/src/settings.yml', 'r') as file:
+    settings = yaml.safe_load(file)
+
+data_dir = Path(settings['data_dir'])
+years = settings['years']
+pre_render = settings['pre_render']
+host_base_port = settings['tileserver']['host_base_port']
+container_base_port = settings['tileserver']['container_base_port']
+preload_chips = settings['preload_chips']
+chip_buffer_size = settings['chip_buffer_size']
 
 if not pre_render:
     servers = {}
     for year in years:
         servers[year] = TileClient(
             f"/home/jovyan/solara-labeler/src/public/{year}/{year}_orthophoto_cog.tif",
-            port=8888 + years.index(year),  # use different ports
+            port=container_base_port + years.index(year),  # use different ports
             host="0.0.0.0",
         )
 
@@ -40,13 +48,17 @@ hover_style_dict = {
     "color": styledict["color"],
 }
 
-zoom = solara.reactive(20)
-center = solara.reactive((42.251504, -71.823585))
+zoom = solara.reactive(settings['map']['zoom'])
+center = solara.reactive(settings['map']['center'])
 current_chip = solara.reactive(None)
 previous_chip = solara.reactive(None)
+chip_buffer = solara.reactive(None)
 current_year_index = solara.reactive(0)
 current_user = solara.reactive("")
 success_visible = solara.reactive(False)
+error_visible = solara.reactive(False)
+success_message = solara.reactive("")
+error_message = solara.reactive("")
 
 def deg2num(lat_deg, lon_deg, zoom):
     lat_rad = math.radians(lat_deg)
@@ -67,7 +79,6 @@ def bbox_to_tiles(bbox, zoom):
     
 def display_chip(m, styledict, hover_style_dict):
     """Display a chip on the map"""
-    #chip_id.set(chip_gdf.iloc[0]['id'])
     chip_gdf = current_chip.value
     c = [c[0] for c in chip_gdf.to_crs('EPSG:4326').iloc[0].geometry.centroid.coords.xy]
     
@@ -87,7 +98,7 @@ def display_chip(m, styledict, hover_style_dict):
     )
     
     center.set((c[1], c[0]))
-    zoom.set(20)
+    zoom.set(settings['map']['zoom'])
     setattr(m, "gdf", chip_gdf)
 
 def add_widgets(m, data_dir, styledict, hover_style_dict):
@@ -96,7 +107,33 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         current_chip.set(previous_chip.value)
         display_chip(m, styledict, hover_style_dict)
 
+    def initialize_chip_buffer():
+        chips = pd.read_csv(data_dir / 'chip_tracker.csv')
+        labeled_chips = chips[chips['status'] == 'pending']
+        new_chips = labeled_chips.head(settings['chip_buffer_size']).copy()
+        # mark these chips as active and save to tracker on disk
+        chips.loc[new_chips.index, 'status'] = 'active'
+        chips.to_csv(data_dir / 'chip_tracker.csv', index=False)      
+        # re-constitute the geometry
+        new_chips['geometry'] = new_chips['bbox'].apply(lambda coord_str: Polygon(eval(coord_str)))
+        
+        # create the full geodataframe
+        chip_gdf = gpd.GeoDataFrame(new_chips, geometry='geometry', crs=settings['crs']).to_crs('EPSG:3857')
+        
+        # split into individual geodataframes (one per chip)
+        chip_list = []
+        for idx, row in chip_gdf.iterrows():
+            single_chip_gdf = gpd.GeoDataFrame([row], geometry='geometry', crs='EPSG:3857')
+            chip_list.append(single_chip_gdf)
+        
+        # set the chip buffer to the list of individual geodataframes
+        chip_buffer.set(chip_list)
+
     def next_chip(b):
+        # Initialize buffer if it's None or empty
+        if chip_buffer.value is None and preload_chips:
+            initialize_chip_buffer()
+
         # save the previous chip for re-doing
         if current_chip.value is not None:
             previous_chip.set(current_chip.value)
@@ -118,8 +155,15 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         new_chip['geometry'] = new_chip['bbox'].apply(lambda coord_str: Polygon(eval(coord_str)))
         
         # set the current chip equal to the new chip gdf
-        chip_gdf = gpd.GeoDataFrame(new_chip, geometry='geometry', crs='EPSG:6348').to_crs('EPSG:3857')
-        current_chip.set(chip_gdf)
+        chip_gdf = gpd.GeoDataFrame(new_chip, geometry='geometry', crs=settings['crs']).to_crs('EPSG:3857')
+
+        if preload_chips:
+            chip_buffer.value.append(chip_gdf) # add the new chip to the end of the buffer
+            current_chip.set(chip_buffer.value[0]) # set the current chip to the next in line
+            chip_buffer.set(chip_buffer.value[1:]) # remove the chip that was just labeled from the buffer  
+        
+        else:
+            current_chip.set(chip_gdf)
 
         # display the chip on the map
         display_chip(m, styledict, hover_style_dict)
@@ -164,7 +208,7 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
             rois_gdf = gpd.GeoDataFrame(features, geometry='geometry', crs='EPSG:3857')
             
             # Convert to appropriate CRS if needed
-            rois_gdf = rois_gdf.to_crs('EPSG:6348')
+            rois_gdf = rois_gdf.to_crs(settings['crs'])
             
             # Save to file
             output_path = data_dir / 'outputs' / f'{chip_id}_labels_{years[current_year_index.value]}.geojson'
@@ -227,10 +271,10 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         url = f'http://140.232.230.80:8600/static/public/{year}/tiles/{{z}}/{{x}}/{{y}}.png'
         m.add_tile_layer(url=url, 
                     name=f"{year} Orthos", 
-                    attribution="MassGIS",
-                    max_native_zoom=21,
-                    min_native_zoom=21,
-                    #min_zoom=19,
+                    attribution=settings['data_attribution'],
+                    max_native_zoom=settings['map']['zoom']+1,
+                    min_native_zoom=settings['map']['zoom']+1,
+                    min_zoom=settings['map']['zoom']-2,
                     )
             
 
@@ -254,21 +298,30 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         
 
     def sumbit_year(b):
-        save_rois(b)
-        success_visible.set(True)
-        clear_rois(b)
-        if current_year_index.value == (len(years) - 1):
-            if pre_render:
-                m.clear_layers()
-            current_year_index.set(0)
-            mark_chip_labeled(b)
-            next_chip(b)
-            if pre_render:
-                add_year_raster(years[current_year_index.value])
-        else:
-            current_year_index.set(current_year_index.value + 1)
-            if pre_render:
-                add_year_raster(years[current_year_index.value])
+        try:
+            save_rois(b)
+            success_message.set(
+                f"Saved {len(m.user_rois) if m.user_rois else 0} features for chip {current_chip.value.iloc[0]['id']} in year {years[current_year_index.value]}"
+            )
+            success_visible.set(True)
+            clear_rois(b)
+            if current_year_index.value == (len(years) - 1):
+                if pre_render:
+                    m.clear_layers()
+                current_year_index.set(0)
+                mark_chip_labeled(b)
+                next_chip(b)
+                if pre_render:
+                    add_year_raster(years[current_year_index.value])
+            else:
+                current_year_index.set(current_year_index.value + 1)
+                if pre_render:
+                    add_year_raster(years[current_year_index.value])
+        except Exception as e:
+            error_message.set(e)
+            error_visible.set(True)
+            
+            
 
 
     back_to_last_year_button = widgets.Button(description="Redo Previous Year",
@@ -286,18 +339,18 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
     back_to_last_chip_button.on_click(back_to_last_chip)
     submit_year_button.on_click(sumbit_year)
 
-
     m.add_widget(back_to_last_chip_button)
     m.add_widget(back_to_last_year_button)
     m.add_widget(submit_year_button)
-
+    
     next_chip(None)
+
     if pre_render:
         add_year_raster(years[current_year_index.value])
 
 class LabelMap(leafmap.Map):
     def __init__(self, **kwargs):
-        #kwargs["toolbar_control"] = False
+        kwargs["toolbar_control"] = False
         super().__init__(**kwargs)
         for layer in self.layers:
             self.remove_layer(layer)
@@ -311,7 +364,7 @@ class LabelMap(leafmap.Map):
         if not pre_render:
             for year in years:
                 file_url = quote(f"/home/jovyan/solara-labeler/src/public/{year}/{year}_orthophoto_cog.tif", safe='')
-                port=8000 + years.index(year)
+                port=container_base_port + years.index(year)
                 tile_url = f'http://140.232.230.80:{port}/api/tiles/{{z}}/{{x}}/{{y}}.png?&filename={file_url}'
                 self.add_tile_layer(url=tile_url, 
                                     name=f"{year} Orthos", 
@@ -331,7 +384,7 @@ def TilePreloaderFromChip(chip_gdf):
     tile_urls = []
     for year in years:
         for z, x, y in tile_coords:
-            tile_url = f'http://140.232.230.80:8600/static/public/{year}/tiles/{{z}}/{{x}}/{{y}}.png'
+            tile_url = f'http://140.232.230.80:8600/static/public/{year}/tiles/{z}/{x}/{y}.png'
             tile_urls.append(tile_url)
 
     html_content = (
@@ -362,16 +415,19 @@ def Page():
         with solara.Column():
             
             solara.Markdown(f"**Current Year:** {years[current_year_index.value]}")
+            if preload_chips and chip_buffer.value:
+                solara.Markdown(f"Current Buffer IDs: {[gdf.iloc[0]['id'] for gdf in chip_buffer.value]}")
             solara.InputText("Current User:", value=current_user.value, continuous_update=True)
             solara.Button("Exit", on_click=exit_interface, color='red')
             if success_visible.value:    
                 solara.Success(
-                    f"Saved Successfully",
-                    text=True,
-                    dense=True,
-                    outlined=True,
-                    icon=True,
+                    success_message.value
                 )
+            if error_visible.value:    
+                solara.Error(
+                    error_message.value
+                )
+                
             
         with solara.Column(style={"min-width": "500px"}):
             LabelMap.element(
@@ -384,6 +440,8 @@ def Page():
                 data_ctrl=False,
                 height="780px"   
             )
+            if preload_chips:
+                TilePreloaderFromChip(current_chip.value)
 
 
     

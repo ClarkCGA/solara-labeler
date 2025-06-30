@@ -1,7 +1,7 @@
 # Solara Imagery Labeling Interface
 
 ## Purpose
-Create an interactive web application using Solara that enables users to efficiently label imagery by drawing regions of interest (ROIs) on geospatial data. The application will track labeling progress and save user annotations in standardized formats.
+Label geospatial imagery collaboratively with a lightweight, customizable platform for multiple simultaneous users.
 
 ## Architecture
 
@@ -17,8 +17,8 @@ Create an interactive web application using Solara that enables users to efficie
    - GeoJSON export functionality for annotated regions
 
 3. **Application Flow**
-   - Load imagery from local files using LocalTileServer
-   - Display imagery in Leafmap with existing boundary boxes
+   - Load imagery from local files using LocalTileServer or from pre-rendered tiles
+   - Display imagery in Leafmap with AOI boundary boxes
    - Capture user-drawn ROIs and save to GeoJSON
    - Update tracking CSV to mark completed labels
    - Pre-load next images for seamless transition
@@ -26,11 +26,16 @@ Create an interactive web application using Solara that enables users to efficie
 ### Directory Structure
 ```
 /
-├── compose.yml           # Docker compose configuration
-├── Dockerfile            # Docker configuration
-├── README.md             # Project documentation
-└── pages/                # Solara pages
-    └── interface.py     # Map interface
+├── Dockerfile
+├── LICENSE
+├── README.md
+├── compose.yml
+└── src
+    ├── pages
+    │   ├── 00_home.py
+    │   └── 01_interface.py
+    ├── public
+    └── settings.yml
 ```
 
 ### Data Structures

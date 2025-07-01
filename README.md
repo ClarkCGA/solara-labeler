@@ -3,6 +3,21 @@
 ## Purpose
 Label geospatial imagery collaboratively with a lightweight, customizable platform for multiple simultaneous users.
 
+## Running the Interface
+The intended way to run this interface is using docker compose with the compose.yml. After cloning this repository, navigate to the repository and run the command:
+```docker compose up -d```
+To build the docker image and run the interface.
+
+Settings for running the interface can be modified by editing the file ```solara-labeler/src/settings.yml```.
+
+In order to run this interface with the original MA Orthophoto dataset it was designed for, clone the repository github.com/ClarkCGA/solara-labeler-datagen. Modify the ```compose.yml``` files in each repository to specify your data directory and run the dataset generation script. Then, modify the ```compose.yml``` file in this repository to mount the same data directory to the public directory within the container - for example:
+
+```
+    volumes:
+      - /path/to/workspace/solara-labeler/:/home/jovyan/solara-labeler
+      - /path/to/workspace/data/:/home/jovyan/solara-labeler/src/public/
+```
+
 ## Architecture
 
 ### Core Components

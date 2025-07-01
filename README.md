@@ -10,7 +10,7 @@ To build the docker image and run the interface.
 
 Settings for running the interface can be modified by editing the file ```solara-labeler/src/settings.yml```.
 
-In order to run this interface with the original MA Orthophoto dataset it was designed for, clone the data generation repository at [github.com/ClarkCGA/solara-labeler-datagen](github.com/ClarkCGA/solara-labeler-datagen). Modify the ```compose.yml``` files in each repository to specify your data directory and run the dataset generation script. Then, modify the ```compose.yml``` file in this repository to mount the same data directory to the public directory within the container - for example:
+In order to run this interface with the original MA Orthophoto dataset it was designed for, clone the data generation repository at [github.com/ClarkCGA/solara-labeler-datagen](github.com/ClarkCGA/solara-labeler-datagen). Modify the ```compose.yml``` file in the data generation repository to specify your data directory and run the dataset generation script. Then, modify the ```compose.yml``` file in this repository to mount the same data directory to the public directory within the container - for example:
 
 ```
     volumes:

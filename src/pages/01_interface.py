@@ -24,6 +24,7 @@ host_base_port = settings['tileserver']['host_base_port']
 container_base_port = settings['tileserver']['container_base_port']
 preload_chips = settings['preload_chips']
 chip_buffer_size = settings['chip_buffer_size']
+show_buffer = settings['show_buffer']
 
 if not pre_render:
     servers = {}
@@ -51,6 +52,7 @@ hover_style_dict = {
 zoom = solara.reactive(settings['map']['zoom'])
 center = solara.reactive(settings['map']['center'])
 current_chip = solara.reactive(None)
+current_chip_start_time = solara.reactive(None)
 previous_chip = solara.reactive(None)
 chip_buffer = solara.reactive(None)
 current_year_index = solara.reactive(0)
@@ -165,6 +167,8 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         else:
             current_chip.set(chip_gdf)
 
+        current_chip_start_time.set(pd.Timestamp.now().isoformat())
+
         # display the chip on the map
         display_chip(m, styledict, hover_style_dict)
 
@@ -223,7 +227,12 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         chips = pd.read_csv(data_dir / 'chip_tracker.csv')
         chip_idx = chips[chips['id'] == chip_id].index
         if len(chip_idx) > 0:
-            chips.loc[chip_idx, 'status'] = 'labeled'
+            chips.loc[chip_idx, ['status', 'user', 'start_time', 'end_time']] = [
+                'labeled', 
+                current_user.value, 
+                current_chip_start_time.value, 
+                pd.Timestamp.now().isoformat()
+            ]
             chips.to_csv(data_dir / 'chip_tracker.csv', index=False) 
 
     def mark_chip_active(b):
@@ -242,7 +251,7 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         chip_idx = chips[chips['id'] == chip_id].index
         if len(chip_idx) > 0:
             chips.loc[chip_idx, 'status'] = 'pending'
-            chips.to_csv(data_dir / 'chip_tracker.csv', index=False) 
+            chips.to_csv(data_dir / 'chip_tracker.csv', index=False)
 
     def remove_chip_labels(b):
         # Remove rois for the current chip
@@ -298,12 +307,17 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         
 
     def sumbit_year(b):
+        if current_user.value == "":
+            error_message.set("Error: Please enter something in the Current User text box!")
+            error_visible.set(True)
+            return
         try:
             save_rois(b)
             success_message.set(
-                f"Saved {len(m.user_rois) if m.user_rois else 0} features for chip {current_chip.value.iloc[0]['id']} in year {years[current_year_index.value]}"
+                f"Saved {len(m.user_rois) if m.user_rois else 0} features for chip {current_chip.value.iloc[0]['id']} in year {years[current_year_index.value]} under user {current_user.value}"
             )
             success_visible.set(True)
+            error_visible.set(False)
             clear_rois(b)
             if current_year_index.value == (len(years) - 1):
                 if pre_render:
@@ -354,6 +368,7 @@ class LabelMap(leafmap.Map):
         super().__init__(**kwargs)
         for layer in self.layers:
             self.remove_layer(layer)
+        # Show Massachusetts Orthophotos, for comparison
         # mass_url = 'https://tiles.arcgis.com/tiles/hGdibHYSPO59RG1h/arcgis/rest/services/USGS_Orthos_2019/MapServer/WMTS/tile/1.0.0/USGS_Orthos_2019/default/default028mm/{z}/{y}/{x}'
         # self.add_tile_layer(url=mass_url, 
         #                     name="2019 Orthos WMTS", 
@@ -406,18 +421,29 @@ def Page():
             chips.loc[chip_idx, 'status'] = 'pending'
             chips.to_csv(data_dir / 'chip_tracker.csv', index=False)
             print(f"Chip {chip_id} marked as pending.")
+            
+    def mark_buffer_pending():
+        chips = pd.read_csv(data_dir / 'chip_tracker.csv')
+        for gdf in chip_buffer.value:
+            chip_id = gdf.iloc[0]['id']
+            chip_idx = chips[chips['id'] == chip_id].index
+            chips.loc[chip_idx, 'status'] = 'pending'
+            print(f"Chip {chip_id} marked as pending.")
+        chips.to_csv(data_dir / 'chip_tracker.csv', index=False)
 
     def exit_interface():
         mark_chip_pending()
+        if preload_chips:
+            mark_buffer_pending()
         router.push("/")
 
     with solara.Columns([1, 3]):
         with solara.Column():
             
             solara.Markdown(f"**Current Year:** {years[current_year_index.value]}")
-            if preload_chips and chip_buffer.value:
+            if preload_chips and chip_buffer.value and show_buffer:
                 solara.Markdown(f"Current Buffer IDs: {[gdf.iloc[0]['id'] for gdf in chip_buffer.value]}")
-            solara.InputText("Current User:", value=current_user.value, continuous_update=True)
+            solara.InputText("Current User:", value=current_user, on_value=current_user.set, continuous_update=True)
             solara.Button("Exit", on_click=exit_interface, color='red')
             if success_visible.value:    
                 solara.Success(

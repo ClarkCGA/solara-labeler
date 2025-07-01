@@ -7,6 +7,7 @@ years:
 pre_render: True
 preload_chips: True
 chip_buffer_size: 5
+show_buffer: False
 crs: 'EPSG:6348'
 
 map:

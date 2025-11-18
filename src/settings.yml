@@ -21,5 +21,6 @@ tileserver:
   host_base_port: 8000
   container_base_port: 8888
 
+host_ip: '140.232.230.115'
 
 

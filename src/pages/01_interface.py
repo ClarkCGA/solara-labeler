@@ -16,6 +16,15 @@ import yaml
 import duckdb
 from contextlib import contextmanager
 import time
+import logging
+import sys
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,  # Log to stdout, which is standard for containers
+)
+logger = logging.getLogger(__name__)
 
 
 with open('/home/jovyan/solara-labeler/src/settings.yml', 'r') as file:
@@ -29,7 +38,9 @@ container_base_port = settings['tileserver']['container_base_port']
 preload_chips = settings['preload_chips']
 chip_buffer_size = settings['chip_buffer_size']
 show_buffer = settings['show_buffer']
+host_ip = settings['host_ip']
 db_path = data_dir / 'chip_tracker.duckdb'
+
 
 @contextmanager
 def connect_to_db():
@@ -43,7 +54,6 @@ def connect_to_db():
         yield con
     finally:
         con.close()
-
 
 if not pre_render:
     servers = {}
@@ -168,7 +178,7 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
             new_chip = con.execute("SELECT * FROM chip_tracker WHERE status = 'pending' LIMIT 1").df()
 
             if new_chip.empty:
-                print("No pending chips")
+                logger.warning("No pending chips")
                 return
 
             chip_id = new_chip.iloc[0]['id']
@@ -201,7 +211,7 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
     def save_rois(b):
         # Get the current chip information
         if current_chip.value is None:
-            print("No active chip to save ROIs for")
+            logger.warning("No active chip to save ROIs for")
             return
         
         chip_id = current_chip.value.iloc[0]['id']
@@ -210,7 +220,7 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         drawn_features = m.user_rois
         
         if not drawn_features:
-            print("No ROIs drawn on the map")
+            logger.warning("No ROIs drawn on the map")
             return
         
         # Create a GeoDataFrame from the drawn features
@@ -242,7 +252,7 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
             
             rois_gdf.to_file(output_path, driver='GeoJSON')
             
-            print(f"Saved {len(features)} ROIs to {output_path}")
+            logger.info(f"Saved {len(features)} ROIs to {output_path}")
 
     
     def mark_chip_labeled(b):
@@ -269,7 +279,7 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         # Remove rois for the current chip
         # Get the current chip information
         if current_chip.value is None:
-            print("No active chip to delete ROIs for")
+            logger.warning("No active chip to delete ROIs for")
             return
         chip_id = current_chip.value.iloc[0]['id']
 
@@ -285,7 +295,7 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         output_path.unlink(missing_ok=True)
 
     def add_year_raster(year):
-        url = f'http://140.232.230.115:8600/static/public/{year}/tiles/{{z}}/{{x}}/{{y}}.png'
+        url = f'http://{host_ip}:8600/static/public/{year}/tiles/{{z}}/{{x}}/{{y}}.png'
         m.add_tile_layer(url=url, 
                     name=f"{year} Orthos", 
                     attribution=settings['data_attribution'],
@@ -388,7 +398,7 @@ class LabelMap(leafmap.Map):
             for year in years:
                 file_url = quote(f"/home/jovyan/solara-labeler/src/public/{year}/{year}_orthophoto_cog.tif", safe='')
                 port=container_base_port + years.index(year)
-                tile_url = f'http://140.232.230.115:{port}/api/tiles/{{z}}/{{x}}/{{y}}.png?&filename={file_url}'
+                tile_url = f'http://{host_ip}:{port}/api/tiles/{{z}}/{{x}}/{{y}}.png?&filename={file_url}'
                 self.add_tile_layer(url=tile_url, 
                                     name=f"{year} Orthos", 
                                     attribution="MassGIS",
@@ -407,7 +417,7 @@ def TilePreloaderFromChip(chip_gdf):
     tile_urls = []
     for year in years:
         for z, x, y in tile_coords:
-            tile_url = f'http://140.232.230.115:8600/static/public/{year}/tiles/{z}/{x}/{y}.png'
+            tile_url = f'http://{host_ip}:8600/static/public/{year}/tiles/{z}/{x}/{y}.png'
             tile_urls.append(tile_url)
 
     html_content = (
@@ -425,7 +435,7 @@ def Page():
         chip_id = current_chip.value.iloc[0]['id']
         with connect_to_db() as con:
             con.execute("UPDATE chip_tracker SET status = 'pending' WHERE id = ?", [chip_id])
-        print(f"Chip {chip_id} marked as pending.")
+        logger.info(f"Chip {chip_id} marked as pending.")
             
     def mark_buffer_pending():
         if not chip_buffer.value:
@@ -434,7 +444,7 @@ def Page():
             chip_id = gdf.iloc[0]['id']
             with connect_to_db() as con:
                 con.execute("UPDATE chip_tracker SET status = 'pending' WHERE id = ?", [chip_id])
-            print(f"Chip {chip_id} marked as pending.")
+            logger.info(f"Chip {chip_id} marked as pending.")
 
     def exit_interface():
         mark_chip_pending()

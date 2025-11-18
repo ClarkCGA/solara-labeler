@@ -13,6 +13,7 @@ import requests
 from urllib.parse import quote
 import math
 import yaml
+import duckdb
 
 with open('/home/jovyan/solara-labeler/src/settings.yml', 'r') as file:
     settings = yaml.safe_load(file)
@@ -26,6 +27,22 @@ preload_chips = settings['preload_chips']
 chip_buffer_size = settings['chip_buffer_size']
 show_buffer = settings['show_buffer']
 
+db_path = data_dir / 'chip_tracker.duckdb'
+con = duckdb.connect(str(db_path))
+table_exists = con.execute(
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'chip_tracker'"
+).fetchone()[0] > 0
+
+if not table_exists:
+    csv_path = data_dir / 'chip_tracker.csv'  # change if your CSV has a different name/location
+    if csv_path.exists():
+        csv_str = str(csv_path).replace("'", "''")
+        con.execute(f"CREATE TABLE chip_tracker AS SELECT * FROM read_csv_auto('{csv_str}')")
+    else:
+        raise FileNotFoundError(
+            f"No chip_tracker table in {db_path} and no CSV found at {csv_path} to create it from."
+        )
+    
 if not pre_render:
     servers = {}
     for year in years:
@@ -110,12 +127,14 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         display_chip(m, styledict, hover_style_dict)
 
     def initialize_chip_buffer():
-        chips = pd.read_csv(data_dir / 'chip_tracker.csv')
-        labeled_chips = chips[chips['status'] == 'pending']
-        new_chips = labeled_chips.head(settings['chip_buffer_size']).copy()
-        # mark these chips as active and save to tracker on disk
-        chips.loc[new_chips.index, 'status'] = 'active'
-        chips.to_csv(data_dir / 'chip_tracker.csv', index=False)      
+        chips = con.execute("SELECT * FROM chip_tracker WHERE status = 'pending'").df()
+        new_chips = chips.head(settings['chip_buffer_size']).copy()
+        
+        # mark these chips as active and save to tracker
+        chip_ids = new_chips['id'].tolist()
+        placeholders = ','.join(['?' for _ in chip_ids])
+        con.execute(f"UPDATE chip_tracker SET status = 'active' WHERE id IN ({placeholders})", chip_ids)
+        
         # re-constitute the geometry
         new_chips['geometry'] = new_chips['bbox'].apply(lambda coord_str: Polygon(eval(coord_str)))
         
@@ -140,19 +159,18 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         if current_chip.value is not None:
             previous_chip.set(current_chip.value)
 
-        # read in chip tracker
-        chips = pd.read_csv(data_dir / 'chip_tracker.csv')
-        
-        # get all chips with pending status
-        labeled_chips = chips[chips['status'] == 'pending']
+        # get one pending chip from duckdb
+        new_chip = con.execute("SELECT * FROM chip_tracker WHERE status = 'pending' LIMIT 1").df()
 
-        # get the first chip
-        new_chip = labeled_chips.head(1).copy()
+        if new_chip.empty:
+            print("No pending chips")
+            return
 
-        # mark this chip as active and save to tracker on disk
-        chips.loc[new_chip.index, 'status'] = 'active'
-        chips.to_csv(data_dir / 'chip_tracker.csv', index=False)
-        
+        chip_id = new_chip.iloc[0]['id']
+
+        # mark this chip as active in the DB
+        con.execute("UPDATE chip_tracker SET status = 'active' WHERE id = ?", [chip_id])
+
         # re-constitute the geometry
         new_chip['geometry'] = new_chip['bbox'].apply(lambda coord_str: Polygon(eval(coord_str)))
         
@@ -221,38 +239,23 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
             
             print(f"Saved {len(features)} ROIs to {output_path}")
 
+    
     def mark_chip_labeled(b):
         chip_id = current_chip.value.iloc[0]['id']
-        # Update chip status to labeled in tracker
-        chips = pd.read_csv(data_dir / 'chip_tracker.csv')
-        chip_idx = chips[chips['id'] == chip_id].index
-        if len(chip_idx) > 0:
-            chips.loc[chip_idx, ['status', 'user', 'start_time', 'end_time']] = [
-                'labeled', 
-                current_user.value, 
-                current_chip_start_time.value, 
-                pd.Timestamp.now().isoformat()
-            ]
-            chips.to_csv(data_dir / 'chip_tracker.csv', index=False) 
+        # Update chip status to labeled in tracker (duckdb)
+        con.execute(
+            "UPDATE chip_tracker SET status = ?, user = ?, start_time = ?, end_time = ? WHERE id = ?",
+            ['labeled', current_user.value, current_chip_start_time.value, pd.Timestamp.now().isoformat(), chip_id]
+        )
 
     def mark_chip_active(b):
         chip_id = current_chip.value.iloc[0]['id']
-        # Update chip status to labeled in tracker
-        chips = pd.read_csv(data_dir / 'chip_tracker.csv')
-        chip_idx = chips[chips['id'] == chip_id].index
-        if len(chip_idx) > 0:
-            chips.loc[chip_idx, 'status'] = 'active'
-            chips.to_csv(data_dir / 'chip_tracker.csv', index=False) 
+        con.execute("UPDATE chip_tracker SET status = 'active' WHERE id = ?", [chip_id])
 
     def mark_chip_pending(b):
         chip_id = current_chip.value.iloc[0]['id']
-        # Update chip status to labeled in tracker
-        chips = pd.read_csv(data_dir / 'chip_tracker.csv')
-        chip_idx = chips[chips['id'] == chip_id].index
-        if len(chip_idx) > 0:
-            chips.loc[chip_idx, 'status'] = 'pending'
-            chips.to_csv(data_dir / 'chip_tracker.csv', index=False)
-
+        con.execute("UPDATE chip_tracker SET status = 'pending' WHERE id = ?", [chip_id])
+        
     def remove_chip_labels(b):
         # Remove rois for the current chip
         # Get the current chip information
@@ -264,20 +267,15 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         for year in years:
             remove_year_labels(b, chip_id, year)
         
-        # Update chip status to labeled in tracker
-        chips = pd.read_csv(data_dir / 'chip_tracker.csv')
-        chip_idx = chips[chips['id'] == chip_id].index
-        if len(chip_idx) > 0:
-            chips.loc[chip_idx, 'status'] = 'active'
-            chips.to_csv(data_dir / 'chip_tracker.csv', index=False)
+        # Update chip status to active in duckdb
+        con.execute("UPDATE chip_tracker SET status = 'active' WHERE id = ?", [chip_id])
 
     def remove_year_labels(b, chip_id, year):
         output_path = data_dir / 'outputs' / f'{chip_id}_labels_{year}.geojson'
         output_path.unlink(missing_ok=True)
 
-
     def add_year_raster(year):
-        url = f'http://140.232.230.80:8600/static/public/{year}/tiles/{{z}}/{{x}}/{{y}}.png'
+        url = f'http://140.232.230.115:8600/static/public/{year}/tiles/{{z}}/{{x}}/{{y}}.png'
         m.add_tile_layer(url=url, 
                     name=f"{year} Orthos", 
                     attribution=settings['data_attribution'],
@@ -380,7 +378,7 @@ class LabelMap(leafmap.Map):
             for year in years:
                 file_url = quote(f"/home/jovyan/solara-labeler/src/public/{year}/{year}_orthophoto_cog.tif", safe='')
                 port=container_base_port + years.index(year)
-                tile_url = f'http://140.232.230.80:{port}/api/tiles/{{z}}/{{x}}/{{y}}.png?&filename={file_url}'
+                tile_url = f'http://140.232.230.115:{port}/api/tiles/{{z}}/{{x}}/{{y}}.png?&filename={file_url}'
                 self.add_tile_layer(url=tile_url, 
                                     name=f"{year} Orthos", 
                                     attribution="MassGIS",
@@ -399,7 +397,7 @@ def TilePreloaderFromChip(chip_gdf):
     tile_urls = []
     for year in years:
         for z, x, y in tile_coords:
-            tile_url = f'http://140.232.230.80:8600/static/public/{year}/tiles/{z}/{x}/{y}.png'
+            tile_url = f'http://140.232.230.115:8600/static/public/{year}/tiles/{z}/{x}/{y}.png'
             tile_urls.append(tile_url)
 
     html_content = (
@@ -415,21 +413,16 @@ def Page():
 
     def mark_chip_pending():
         chip_id = current_chip.value.iloc[0]['id']
-        chips = pd.read_csv(data_dir / 'chip_tracker.csv')
-        chip_idx = chips[chips['id'] == chip_id].index
-        if len(chip_idx) > 0:
-            chips.loc[chip_idx, 'status'] = 'pending'
-            chips.to_csv(data_dir / 'chip_tracker.csv', index=False)
-            print(f"Chip {chip_id} marked as pending.")
+        con.execute("UPDATE chip_tracker SET status = 'pending' WHERE id = ?", [chip_id])
+        print(f"Chip {chip_id} marked as pending.")
             
     def mark_buffer_pending():
-        chips = pd.read_csv(data_dir / 'chip_tracker.csv')
+        if not chip_buffer.value:
+            return
         for gdf in chip_buffer.value:
             chip_id = gdf.iloc[0]['id']
-            chip_idx = chips[chips['id'] == chip_id].index
-            chips.loc[chip_idx, 'status'] = 'pending'
+            con.execute("UPDATE chip_tracker SET status = 'pending' WHERE id = ?", [chip_id])
             print(f"Chip {chip_id} marked as pending.")
-        chips.to_csv(data_dir / 'chip_tracker.csv', index=False)
 
     def exit_interface():
         mark_chip_pending()

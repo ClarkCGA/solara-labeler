@@ -14,6 +14,9 @@ from urllib.parse import quote
 import math
 import yaml
 import duckdb
+from contextlib import contextmanager
+import time
+
 
 with open('/home/jovyan/solara-labeler/src/settings.yml', 'r') as file:
     settings = yaml.safe_load(file)
@@ -26,23 +29,22 @@ container_base_port = settings['tileserver']['container_base_port']
 preload_chips = settings['preload_chips']
 chip_buffer_size = settings['chip_buffer_size']
 show_buffer = settings['show_buffer']
-
 db_path = data_dir / 'chip_tracker.duckdb'
-con = duckdb.connect(str(db_path))
-table_exists = con.execute(
-    "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'chip_tracker'"
-).fetchone()[0] > 0
 
-if not table_exists:
-    csv_path = data_dir / 'chip_tracker.csv'  # change if your CSV has a different name/location
-    if csv_path.exists():
-        csv_str = str(csv_path).replace("'", "''")
-        con.execute(f"CREATE TABLE chip_tracker AS SELECT * FROM read_csv_auto('{csv_str}')")
-    else:
-        raise FileNotFoundError(
-            f"No chip_tracker table in {db_path} and no CSV found at {csv_path} to create it from."
-        )
-    
+@contextmanager
+def connect_to_db():
+    con = None
+    while con is None:
+        try:
+            con=duckdb.connect(str(db_path))
+        except duckdb.IOException:
+            time.sleep(0.1)
+    try:
+        yield con
+    finally:
+        con.close()
+
+
 if not pre_render:
     servers = {}
     for year in years:
@@ -127,13 +129,15 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
         display_chip(m, styledict, hover_style_dict)
 
     def initialize_chip_buffer():
-        chips = con.execute("SELECT * FROM chip_tracker WHERE status = 'pending'").df()
-        new_chips = chips.head(settings['chip_buffer_size']).copy()
-        
-        # mark these chips as active and save to tracker
-        chip_ids = new_chips['id'].tolist()
-        placeholders = ','.join(['?' for _ in chip_ids])
-        con.execute(f"UPDATE chip_tracker SET status = 'active' WHERE id IN ({placeholders})", chip_ids)
+        with connect_to_db() as con:
+            chips = con.execute("SELECT * FROM chip_tracker WHERE status = 'pending'").df()
+
+            new_chips = chips.head(settings['chip_buffer_size']).copy()
+            
+            # mark these chips as active and save to tracker
+            chip_ids = new_chips['id'].tolist()
+            placeholders = ','.join(['?' for _ in chip_ids])
+            con.execute(f"UPDATE chip_tracker SET status = 'active' WHERE id IN ({placeholders})", chip_ids)
         
         # re-constitute the geometry
         new_chips['geometry'] = new_chips['bbox'].apply(lambda coord_str: Polygon(eval(coord_str)))
@@ -160,16 +164,17 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
             previous_chip.set(current_chip.value)
 
         # get one pending chip from duckdb
-        new_chip = con.execute("SELECT * FROM chip_tracker WHERE status = 'pending' LIMIT 1").df()
+        with connect_to_db() as con:
+            new_chip = con.execute("SELECT * FROM chip_tracker WHERE status = 'pending' LIMIT 1").df()
 
-        if new_chip.empty:
-            print("No pending chips")
-            return
+            if new_chip.empty:
+                print("No pending chips")
+                return
 
-        chip_id = new_chip.iloc[0]['id']
+            chip_id = new_chip.iloc[0]['id']
 
-        # mark this chip as active in the DB
-        con.execute("UPDATE chip_tracker SET status = 'active' WHERE id = ?", [chip_id])
+            # mark this chip as active in the DB
+            con.execute("UPDATE chip_tracker SET status = 'active' WHERE id = ?", [chip_id])
 
         # re-constitute the geometry
         new_chip['geometry'] = new_chip['bbox'].apply(lambda coord_str: Polygon(eval(coord_str)))
@@ -243,18 +248,22 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
     def mark_chip_labeled(b):
         chip_id = current_chip.value.iloc[0]['id']
         # Update chip status to labeled in tracker (duckdb)
-        con.execute(
-            "UPDATE chip_tracker SET status = ?, user = ?, start_time = ?, end_time = ? WHERE id = ?",
-            ['labeled', current_user.value, current_chip_start_time.value, pd.Timestamp.now().isoformat(), chip_id]
-        )
+        with connect_to_db() as con:
+            con.execute(
+                "UPDATE chip_tracker SET status = ?, user = ?, start_time = ?, end_time = ? WHERE id = ?",
+                ['labeled', current_user.value, current_chip_start_time.value, pd.Timestamp.now().isoformat(), chip_id]
+            )
 
     def mark_chip_active(b):
         chip_id = current_chip.value.iloc[0]['id']
-        con.execute("UPDATE chip_tracker SET status = 'active' WHERE id = ?", [chip_id])
+        with connect_to_db() as con:
+            con.execute("UPDATE chip_tracker SET status = 'active' WHERE id = ?", [chip_id])
+
 
     def mark_chip_pending(b):
         chip_id = current_chip.value.iloc[0]['id']
-        con.execute("UPDATE chip_tracker SET status = 'pending' WHERE id = ?", [chip_id])
+        with connect_to_db() as con:
+            con.execute("UPDATE chip_tracker SET status = 'pending' WHERE id = ?", [chip_id])
         
     def remove_chip_labels(b):
         # Remove rois for the current chip
@@ -268,7 +277,8 @@ def add_widgets(m, data_dir, styledict, hover_style_dict):
             remove_year_labels(b, chip_id, year)
         
         # Update chip status to active in duckdb
-        con.execute("UPDATE chip_tracker SET status = 'active' WHERE id = ?", [chip_id])
+        with connect_to_db() as con:
+            con.execute("UPDATE chip_tracker SET status = 'active' WHERE id = ?", [chip_id])
 
     def remove_year_labels(b, chip_id, year):
         output_path = data_dir / 'outputs' / f'{chip_id}_labels_{year}.geojson'
@@ -413,7 +423,8 @@ def Page():
 
     def mark_chip_pending():
         chip_id = current_chip.value.iloc[0]['id']
-        con.execute("UPDATE chip_tracker SET status = 'pending' WHERE id = ?", [chip_id])
+        with connect_to_db() as con:
+            con.execute("UPDATE chip_tracker SET status = 'pending' WHERE id = ?", [chip_id])
         print(f"Chip {chip_id} marked as pending.")
             
     def mark_buffer_pending():
@@ -421,7 +432,8 @@ def Page():
             return
         for gdf in chip_buffer.value:
             chip_id = gdf.iloc[0]['id']
-            con.execute("UPDATE chip_tracker SET status = 'pending' WHERE id = ?", [chip_id])
+            with connect_to_db() as con:
+                con.execute("UPDATE chip_tracker SET status = 'pending' WHERE id = ?", [chip_id])
             print(f"Chip {chip_id} marked as pending.")
 
     def exit_interface():

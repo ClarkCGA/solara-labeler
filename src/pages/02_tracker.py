@@ -11,6 +11,8 @@ import yaml
 import duckdb
 import logging
 import sys
+from contextlib import contextmanager
+import time
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,7 +42,7 @@ fgb_path = data_dir/ "chip_tracker.fgb"
 status_map = {
     "pending": "red",
     "active": "yellow",    
-    "labelled": "green",
+    "labeled": "green",
 }
 
 
@@ -57,15 +59,28 @@ callback = lambda feat: {
 
 center = solara.reactive(settings['map']['center'])
 zoom = solara.reactive(15)
-con = duckdb.connect(str(db_path), read_only=True)
-con.execute("INSTALL spatial;")
-con.execute("LOAD spatial;")
+
 gdf_data = solara.reactive(gpd.GeoDataFrame())
+@contextmanager
+def connect_to_db():
+    con = None
+    while con is None:
+        try:
+            con=duckdb.connect(str(db_path))
+            con.execute("INSTALL spatial;")
+            con.execute("LOAD spatial;") 
+        except duckdb.IOException:
+            time.sleep(0.1)
+    try:
+        yield con
+    finally:
+        con.close()
 
 
 def add_widgets(m):
     def refresh_data(b):
-        query_result = con.execute("SELECT status, user, ST_AsText(geom) as wkt_geom FROM chip_tracker").fetchdf()
+        with connect_to_db() as con:
+            query_result = con.execute("SELECT status, user, ST_AsText(geom) as wkt_geom FROM chip_tracker").fetchdf()
         query_result_gdf = gpd.GeoDataFrame(query_result)
         query_result_gdf['geometry'] = query_result_gdf['wkt_geom'].apply(wkt.loads)
         query_result_gdf.geometry = query_result_gdf['geometry']

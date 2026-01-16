@@ -16,8 +16,9 @@ def Page():
 
         ## Using the Interface
 
-        1. Use the polygon tool and the mouse to draw polygons covering all solar arrays within the red region as accurately as possible.
+        1. Use the polygon tool and the mouse to draw polygons covering all solar arrays which overlap the red region as accurately as possible.
             - Use the scroll wheel or the zoom buttons on the top left to zoom to each solar array.
+            - Draw the polygon so it contains any pixel which is part of the solar array.
             - If there are gaps in the solar array, draw two intersecting polygons that overlap all panels, leaving gaps empty.
             - If there are no solar arrays, continue to step 2.
         2. Click the Green 'Save Labels to Disk' button in the bottom right of the map. This automatically loads the next task.

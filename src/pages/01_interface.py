@@ -90,6 +90,7 @@ success_visible = solara.reactive(False)
 error_visible = solara.reactive(False)
 success_message = solara.reactive("")
 error_message = solara.reactive("")
+estimated_time_remaining = solara.reactive(0)
 
 def deg2num(lat_deg, lon_deg, zoom):
     lat_rad = math.radians(lat_deg)
@@ -459,6 +460,10 @@ def Page():
             if preload_chips and chip_buffer.value and show_buffer:
                 solara.Markdown(f"Current Buffer IDs: {[gdf.iloc[0]['id'] for gdf in chip_buffer.value]}")
             solara.InputText("Current User:", value=current_user, on_value=current_user.set, continuous_update=True)
+            solara.Button("Estimate time remaining", on_click=estimate_time_remaining, color='purple')
+            if estimated_time_remaining is not None:
+                solara.markdown(f"estimated time remaining: {estimated_time_remaining}")
+
             solara.Button("Exit", on_click=exit_interface, color='red')
             if success_visible.value:    
                 solara.Success(
@@ -468,6 +473,7 @@ def Page():
                 solara.Error(
                     error_message.value
                 )
+
                 
             
         with solara.Column(style={"min-width": "500px"}):

@@ -3,11 +3,13 @@ services:
     container_name: solara_labeler
     build: .
     volumes:
-      - /workspace/Denys/solar/solara-labeler/:/home/jovyan/solara-labeler
-      - /workspace/Denys/solar/data/:/home/jovyan/solara-labeler/src/public/
+      - ./:/home/jovyan/solara-labeler
+      - "${SOLAR_DATA_DIRECTORY}:/home/jovyan/solara-labeler/src/public"
     ports:
       - "8600:8765"
       - "8000:8888"
       - "8001:8889"
       - "8002:8890"
       - "8100:8100"
+    command: solara run /home/jovyan/solara-labeler/src/pages/ --host=0.0.0.0
+    

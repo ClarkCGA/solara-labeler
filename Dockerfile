@@ -13,4 +13,3 @@ USER ${NB_USER}
 EXPOSE 8765
 EXPOSE 8888
 
-CMD ["solara", "run", "./solara-labeler/src/pages/", "--host=0.0.0.0"]
